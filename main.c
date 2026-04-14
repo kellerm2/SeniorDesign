@@ -129,7 +129,7 @@ uint8_t active_dispenser_index = 0;
 #define MAX_ALARM_MSG_LENGTH 100
 
 #define STEPS_PER_90_DEGREES 1024
-#define STEP_DELAY 3
+#define STEP_DELAY 6
 
 #define PICKUP_WAIT_DURATION_MS 50000 //50 secs
 #define SIMULATE_MOTORS 0
@@ -182,6 +182,7 @@ DispenserStatus disp_status[4];
 //static float current_weight = 0;
 //static uint8_t event = 0;
 static uint8_t change_happened = 0;
+static uint8_t last_sync_minute = 60;
 
 //SD CARD
 FATFS fs;
@@ -303,8 +304,7 @@ void System_Time_Set(uint8_t month, uint8_t date, uint8_t year,uint8_t hour, uin
         sDate.Date = date;
         sDate.Year = year;
         HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
-
-//        printf("RTC Set: %02d/%02d/%02d %02d:%02d:%02d\r\n", month, date, year, hour, min, sec);
+        printf("RTC Set: %02d/%02d/%02d %02d:%02d:%02d\r\n", month, date, year, hour, min, sec);
     } else {
 //        printf("ERROR: Failed to set RTC time.\r\n");
     }
@@ -686,7 +686,7 @@ void Handle_Incoming_UART_Message(void) {
     		    char req_user[32] = {0};
 
     		    if (sscanf((char*)processing_buffer, "LOGIN:%31[^\r\n]", req_user) == 1) {
-//    		        printf("DBG: User Login Detected: %s\r\n", req_user);
+    		        printf("DBG: User Login Detected: %s\r\n", req_user);
 
     		        if (!User_Exists(req_user)) {
 
@@ -722,7 +722,7 @@ void Handle_Incoming_UART_Message(void) {
 
 						char ack_msg[100];
 						snprintf(ack_msg, sizeof(ack_msg), "LOGIN_ACK:SUCCESS:%s:%s\n", loaded_role, loaded_phone);
-//						printf("DEBUG - Sending to ESP32: %s", ack_msg);
+						printf("DEBUG - Sending to ESP32: %s", ack_msg);
 						Send_UART_ACK(ack_msg);
 						HAL_Delay(50);
 
@@ -832,50 +832,75 @@ void Handle_Incoming_UART_Message(void) {
     		}
 
 
-         else {
-        	 uint8_t mo, da, yr, hr, mn, sc;
-        	 if (sscanf((char*)processing_buffer, "%hhu:%hhu:%hhu:%hhu:%hhu:%hhu", &mo, &da, &yr, &hr, &mn, &sc) == 6) {
-//        	             printf("DBG: Successfully parsed Live Time Sync.\r\n");
-        	             System_Time_Set(mo, da, yr, hr, mn, sc);
+         else if (strncmp((char*)processing_buffer, "TIME:", 5) == 0) {
+        	 int mo, da, yr, hr, mn, sc;
+        	 if (sscanf((char*)processing_buffer, "TIME:%d:%d:%d:%d:%d:%d", &mo, &da, &yr, &hr, &mn, &sc) == 6) {
+        	             printf("DBG: Successfully parsed Live Time Sync.\r\n");
+        	             System_Time_Set((uint8_t)mo, (uint8_t)da, (uint8_t)yr, (uint8_t)hr, (uint8_t)mn, (uint8_t)sc);
         	             Send_UART_ACK("ACK:TIME_OK\n");
         	         } else {
-//        	             printf("DBG: Failed to parse TIME format.\r\n");
+        	        	 printf("DBG: Failed to parse TIME format. ESP32 actually sent: [%s]\r\n", processing_buffer);
         	             Send_UART_ACK("NACK:INVALID_FORMAT\n");
         	         }
          }
     }
 
 //request time at boot
-void RTC_Set_From_UART_Sync(void) {
-    uint8_t time_data[10] = {0}; // [Hour, Minute, Second]
-    __HAL_UART_FLUSH_DRREGISTER(&huart1);
-
-//unused char rx_buf[64];
-        int retries = 10;
-        bool sync_success = false;
-
+//void RTC_Set_From_UART_Sync(void) {
+//    uint8_t time_data[10] = {0}; // [Hour, Minute, Second]
+//    __HAL_UART_FLUSH_DRREGISTER(&huart1);
+//
+////unused char rx_buf[64];
+//        int retries = 10;
+//        bool sync_success = false;
+//
 //        printf("Requesting time sync from ESP32...\r\n");
-
-        while (retries > 0 && !sync_success) {
-            HAL_UART_Transmit(&huart1, (uint8_t*)"GET_TIME\n", 9, 100);
-
-            if (HAL_UART_Receive(&huart1, time_data, 6, 2000) == HAL_OK) {
-               System_Time_Set(time_data[0] + 1, time_data[1], time_data[2], time_data[3], time_data[4], time_data[5]);
+//
+//        while (retries > 0 && !sync_success) {
+//            HAL_UART_Transmit(&huart1, (uint8_t*)"GET_TIME\n", 9, 100);
+//
+//            if (HAL_UART_Receive(&huart1, time_data, 6, 2000) == HAL_OK) {
+//               System_Time_Set(time_data[0] + 1, time_data[1], time_data[2], time_data[3], time_data[4], time_data[5]);
 //               printf("DBG: Sync SUCCESS on try %d\r\n", 6 - retries);
-               sync_success = true;
-               } else {
-//                printf("No response, retrying... (%d left)\r\n", retries - 1);
-                retries--;
-                HAL_Delay(500);
-            }
-        }
-
-        if (!sync_success) {
+//               sync_success = true;
+//               } else {
+//            	   printf("No response, retrying... (%d left)\r\n", retries - 1);
+//                retries--;
+//                HAL_Delay(500);
+//            }
+//        }
+//
+//        if (!sync_success) {
 //            printf("Sync FAILED. Defaulting to 12:00:00.\r\n");
-            System_Time_Set( 1, 1, 25, 12, 0, 0);
-        }
-}
+//            System_Time_Set( 1, 1, 25, 12, 0, 0);
+//        }
+//}
+	void RTC_Set_From_UART_Sync(void) {
+		printf("Requesting time sync from ESP32 at boot...\r\n");
+		__HAL_UART_FLUSH_DRREGISTER(&huart1);
 
+		// Clear out any old garbage
+		memset(processing_buffer, 0, MAX_ALARM_MSG_LENGTH);
+		message_ready_to_parse = false;
+
+		HAL_UART_Transmit(&huart1, (uint8_t*)"GET_TIME\n", 9, 100);
+
+		uint32_t start_tick = HAL_GetTick();
+
+		// Wait up to 5 seconds for a response
+		while (HAL_GetTick() - start_tick < 15000) {
+			if (message_ready_to_parse) {
+				message_ready_to_parse = false;
+				Handle_Incoming_UART_Message(); // This will hit the new TIME: block!
+
+				memset(processing_buffer, 0, MAX_ALARM_MSG_LENGTH);
+				return; // Exit function, sync was successful!
+			}
+		}
+
+		printf("Sync FAILED. Defaulting to 12:00:00.\r\n");
+		System_Time_Set(1, 1, 25, 12, 0, 0);
+	}
 
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
@@ -899,6 +924,25 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
         HAL_UART_Receive_IT(&huart1, &rx_byte_it, 1);
     }
 }
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+        // 1. Clear the error flags by reading the Status and Data registers
+        uint32_t isrflags   = READ_REG(huart->Instance->SR);
+        uint32_t cr1its     = READ_REG(huart->Instance->CR1);
+        uint32_t errorflags = (isrflags & (uint32_t)(USART_SR_PE | USART_SR_FE | USART_SR_ORE | USART_SR_NE));
+
+        // Dummy read of the data register to flush the bad byte
+        uint32_t tmpreg = READ_REG(huart->Instance->DR);
+        (void)tmpreg; // Prevent compiler warning
+
+        printf("DBG: UART Error Caught and Cleared! Restarting RX...\r\n");
+
+        // 2. Force the UART to start listening again
+        HAL_UART_Receive_IT(&huart1, &rx_byte_it, 1);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -941,10 +985,10 @@ int main(void)
   // Mount the drive with delayed mounting (0 instead of 1)
     FRESULT res = f_mount(&fs, "", 0);
     if(res == FR_OK) {
-//        printf("SD Card Workspace Registered Successfully.\r\n");
+        printf("SD Card Workspace Registered Successfully.\r\n");
 
     } else {
-//        printf("ERROR: SD Card failed to mount.FatFS Error Code: %d\r\n", res);
+        printf("ERROR: SD Card failed to mount.FatFS Error Code: %d\r\n", res);
     }
 
   HX711_Init(&myLoadCell, GPIOB, GPIO_PIN_3, GPIOB, GPIO_PIN_4);
@@ -959,6 +1003,7 @@ int main(void)
   HX711_SetupPageHinkley(&myLoadCell, 0.5f, 150.0f);
 
   Motor_SetStep(0, 0, 0, 0, 0);
+  HAL_UART_Receive_IT(&huart1, &rx_byte_it, 1);
   RTC_Set_From_UART_Sync();
 
     //set dispenser IDs as inactive
@@ -968,8 +1013,6 @@ int main(void)
     }
 
     volatile uint32_t rx_byte_counter = 0;
-
-    HAL_UART_Receive_IT(&huart1, &rx_byte_it, 1);
 
   /* USER CODE END 2 */
 
@@ -989,6 +1032,9 @@ int main(void)
 					   break;
 				   }
     	   }
+			   // Another Timer call : RTC_Set_From_UART_Sync(); at 30 second mark every 5 minute?
+
+
     	   if (sensor_needed && !any_motor_spinning && HAL_GPIO_ReadPin(myLoadCell.dat_gpio, myLoadCell.dat_pin) == GPIO_PIN_RESET) {
     		       int32_t raw_average = HX711_ReadAverage(&myLoadCell, 30);
     		       int32_t raw_delta = raw_average - myLoadCell.offset;
@@ -999,14 +1045,24 @@ int main(void)
     	           HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);
     	           HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);
 
-//    	           printf("\r\n[SYSTEM TIME] %02d/%02d/%02d %02d:%02d:%02d | Current User: %s\r\n",
-//    	        		   gDate.Month, gDate.Date, gDate.Year, gTime.Hours, gTime.Minutes, gTime.Seconds, current_logged_in_user);
+    	           if ((gTime.Minutes % 2 == 0) && (gTime.Seconds == 30)) { //every 2 minutes 30 seconds
+    	                   if (gTime.Minutes != last_sync_minute) {
+    	                       last_sync_minute = gTime.Minutes;
+
+    	                       // Just transmit the request and walk away! The interrupt will catch the reply.
+    	                       __HAL_UART_FLUSH_DRREGISTER(&huart1);
+    	                       HAL_UART_Transmit(&huart1, (uint8_t*)"GET_TIME\n", 9, 10);
+    	                       printf("DBG: 5-Min Periodic Sync Request Sent.\r\n");
+    	                   }
+    	               }
+    	           printf("\r\n[SYSTEM TIME] %02d/%02d/%02d %02d:%02d:%02d | Current User: %s\r\n",
+    	        		   gDate.Month, gDate.Date, gDate.Year, gTime.Hours, gTime.Minutes, gTime.Seconds, current_logged_in_user);
 
     	           //print active alarms belonging ONLY to the logged-in user
     	           for (int i = 0; i < MAX_TOTAL_ALARMS; i++) {
     	               if (alarms[i].is_active && strcmp(alarms[i].user_id, current_logged_in_user) == 0) {
-//    	                   printf("  -> Active Alarm %d: Disp %d set for %02d:%02d | State: %d\r\n",
-//    	                          i, alarms[i].dispenser_id, alarms[i].hour, alarms[i].minute, alarms[i].state);
+    	                   printf("  -> Active Alarm %d: Disp %d set for %02d:%02d | State: %d\r\n",
+    	                          i, alarms[i].dispenser_id, alarms[i].hour, alarms[i].minute, alarms[i].state);
     	               }
     	           }
     	           debug_print_timer = HAL_GetTick();
@@ -1131,6 +1187,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
+
 
 /**
   * @brief System Clock Configuration
