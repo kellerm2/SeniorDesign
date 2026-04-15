@@ -81,44 +81,50 @@ void HX711_SetupPageHinkley(HX711* data, float delta, float threshold) {
     data->ph_is_active = 0;   // Start inactive until first read
 }
 
-// Run this every time you get a new weight reading
-// Returns 1 if a change (pill drop) is detected, 0 otherwise
 uint8_t HX711_CheckChange(HX711* data, float current_weight) {
-		float instant_diff = current_weight - data->baseline;
 
-	    // 2. Add to rolling buffer
-	    data->diff_history[data->diff_idx] = instant_diff;
-	    data->diff_idx = (data->diff_idx + 1) % 8;
+    // 1. THE SHIELD: Ignore bouncy weight while cooling down from a drop
+    if (data->cooldown_timer > 0) {
+        data->cooldown_timer--;
+        data->baseline = current_weight; // Track the bouncing weight to settle accurately
+        for(int i=0; i<8; i++) data->diff_history[i] = 0;
+        return 0;
+    }
 
-	    // 3. Calculate the Average Difference
-	    float avg_diff = 0;
-	    for(int i = 0; i < 8; i++) {
-	        avg_diff += data->diff_history[i];
-	    }
-	    avg_diff /= 8;
+    float instant_diff = current_weight - data->baseline;
 
-	    // 4. LOW-LEVEL NOISE TRACKING
-	    // If the average movement is tiny, let the baseline follow it
-	    if (fabsf(avg_diff) < 60.0f) {
-	        data->baseline += 0.01f * avg_diff;
-	        return 0;
-	    }
+    // 2. Add to rolling buffer
+    data->diff_history[data->diff_idx] = instant_diff;
+    data->diff_idx = (data->diff_idx + 1) % 8;
 
-	    // 5. AVERAGED SENSITIVITY (The "Touch" Detection)
-	    // We check if the SUSTAINED average is above our threshold
-	    // This allows us to keep the threshold very low (e.g., 35mg)
-	    if (fabsf(avg_diff) > 70.0f) {
-	        data->baseline = current_weight;
+    // 3. Calculate the Average Difference
+    float avg_diff = 0;
+    for(int i = 0; i < 8; i++) {
+        avg_diff += data->diff_history[i];
+    }
+    avg_diff /= 8;
 
-	        // Clear history so we don't double-trigger
-	        for(int i=0; i<8; i++) data->diff_history[i] = 0;
+    // Absorbs motor hum and tiny vibrations up to 50mg
+    if (fabsf(avg_diff) <= 40.0f) {
+        data->baseline += 0.01f * avg_diff;
+        return 0;
+    }
 
-//	        if (avg_diff > 0) printf(">>> PILL PLACED (Avg: %.2f) <<<\r\n", avg_diff);
-//	        else printf(">>> PILL REMOVED (Avg: %.2f) <<<\r\n", avg_diff);
-//
-//	        return 1;
-	        if (avg_diff > 0) return 1;  // Placed
-	        else return 2;             // Removed
-	       }
-	  return 0;
-	}
+    // CHECK 1: DISPENSED (Positive weight change only)
+    if (avg_diff > 50.0f) {
+        data->baseline = current_weight;
+        for(int i=0; i<8; i++) data->diff_history[i] = 0;
+
+        data->cooldown_timer = 10; // Start cooldown to ignore the physical bounce!
+        return 1;  // Placed
+    }
+
+    // Set to -90.0f to require a heavier pull, ignoring standard downward vibration
+    else if (avg_diff < -90.0f) {
+        data->baseline = current_weight;
+        for(int i=0; i<8; i++) data->diff_history[i] = 0;
+        return 2;  // Removed
+    }
+
+    return 0;
+}
