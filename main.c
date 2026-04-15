@@ -18,8 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "fatfs.h"
 #include "hx711.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -183,6 +183,7 @@ DispenserStatus disp_status[4];
 //static uint8_t event = 0;
 static uint8_t change_happened = 0;
 static uint8_t last_sync_minute = 60;
+volatile int32_t debug_raw_ticks = 0;
 
 //SD CARD
 FATFS fs;
@@ -992,7 +993,7 @@ int main(void)
     }
 
   HX711_Init(&myLoadCell, GPIOB, GPIO_PIN_3, GPIOB, GPIO_PIN_4);
-  myLoadCell.coefficient = 1.2f;//
+  myLoadCell.coefficient = 0.198f;//
 
 
   //Tare the scale (reset to 0) on startup
